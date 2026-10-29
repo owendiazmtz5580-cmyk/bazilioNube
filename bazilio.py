@@ -335,27 +335,45 @@ def texto_lilypond(partitura, tempo=120):
 
 
 def generar_wav_python(
-    partitura, ruta_salida, duracion_nota=0.35, sample_rate=44100
+    partitura, ruta_salida, duracion_nota=0.4, sample_rate=44100
 ):
-  """Genera un archivo WAV directamente en Python como respaldo garantizado para la nube."""
+  """Sintetizador mejorado en Python puro con armónicos y envolvente suave
+
+  para un sonido cálido similar a un instrumento musical real.
+  """
   os.makedirs(os.path.dirname(os.path.abspath(ruta_salida)), exist_ok=True)
   samples = []
+
   for nota in partitura:
+    # Fórmula exacta de frecuencia basada en notas de piano
     freq = 440.0 * (2.0 ** ((nota - 33) / 12.0))
     num_muestras = int(sample_rate * duracion_nota)
+
     for i in range(num_muestras):
       t = i / sample_rate
+
+      # Envolvente ADSR simulada (ataque suave y caída natural al final)
       env = 1.0
-      if i < 800:
-        env = i / 800.0
-      elif i > num_muestras - 800:
-        env = (num_muestras - i) / 800.0
-      val = math.sin(2 * math.pi * freq * t) * 0.5 + math.sin(
-          2 * math.pi * freq * 2 * t
-      ) * 0.2
+      ataque = int(sample_rate * 0.03)
+      liberacion = int(sample_rate * 0.1)
+
+      if i < ataque:
+        env = i / ataque
+      elif i > num_muestras - liberacion:
+        env = (num_muestras - i) / liberacion
+
+      # Mezcla de ondas armónicas (fundamental + octava + quinta) para dar cuerpo musical
+      val = (
+          math.sin(2 * math.pi * freq * t) * 0.5
+          + math.sin(2 * math.pi * freq * 2 * t) * 0.25
+          + math.sin(2 * math.pi * freq * 1.5 * t) * 0.15
+      )
+
       val = int(val * 32767 * env)
       samples.append(val)
-    for _ in range(int(sample_rate * 0.05)):
+
+    # Pequeño silencio armónico entre notas para evitar chasquidos
+    for _ in range(int(sample_rate * 0.03)):
       samples.append(0)
 
   with wave.open(ruta_salida, "w") as wav_file:
@@ -369,7 +387,6 @@ def generar_wav_python(
 def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
   os.makedirs("Practica", exist_ok=True)
 
-  # Crear un identificador único basado en las notas de la partitura para evitar caché
   partitura_str = "".join(map(str, partitura))
   hash_partitura = hashlib.md5(partitura_str.encode()).hexdigest()[:6]
 
@@ -415,16 +432,21 @@ def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
       ),
   ]
 
+  exito_externo = False
   for cmd, descripcion, extensiones in pasos:
     if not correr(cmd, descripcion):
       break
     generados += [base + e for e in extensiones]
+    exito_externo = True
 
-  # Si LilyPond o las herramientas externas no están instaladas, generamos el WAV con Python puro
-  if not os.path.exists(base + ".wav") and not os.path.exists(base + ".mp3"):
+  # Si las herramientas externas no están, usamos nuestro sintetizador musical mejorado
+  if not exito_externo or (
+      not os.path.exists(base + ".wav") and not os.path.exists(base + ".mp3")
+  ):
     try:
       generar_wav_python(partitura, base + ".wav")
-      generados.append(base + ".wav")
+      if base + ".wav" not in generados:
+        generados.append(base + ".wav")
     except Exception as e:
       print(f"Aviso: no se pudo generar WAV alternativo: {e}", file=sys.stderr)
 
