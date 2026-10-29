@@ -1,9 +1,12 @@
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
 import threading
+import struct
+import wave
 from antlr4 import CommonTokenStream, FileStream
 from antlr4.error.ErrorListener import ErrorListener
 
@@ -292,7 +295,39 @@ def texto_lilypond(partitura, tempo=120):
             f"}}\n")
 
 
-def generar_salida(partitura, base, solo_ly=False, aviso=print):
+def generar_wav_python(partitura, ruta_salida, duracion_nota=0.35, sample_rate=44100):
+    """Genera un archivo WAV directamente en Python como respaldo garantizado para la nube."""
+    os.makedirs(os.path.dirname(os.path.abspath(ruta_salida)), exist_ok=True)
+    samples = []
+    for nota in partitura:
+        freq = 440.0 * (2.0 ** ((nota - 33) / 12.0))
+        num_muestras = int(sample_rate * duracion_nota)
+        for i in range(num_muestras):
+            t = i / sample_rate
+            env = 1.0
+            if i < 800:
+                env = i / 800.0
+            elif i > num_muestras - 800:
+                env = (num_muestras - i) / 800.0
+            val = math.sin(2 * math.pi * freq * t) * 0.5 + math.sin(2 * math.pi * freq * 2 * t) * 0.2
+            val = int(val * 32767 * env)
+            samples.append(val)
+        for _ in range(int(sample_rate * 0.05)):
+            samples.append(0)
+
+    with wave.open(ruta_salida, 'w') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        for s in samples:
+            wav_file.writeframesraw(struct.pack('<h', max(-32768, min(32767, s))))
+
+
+def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
+    os.makedirs("Practica", exist_ok=True)
+    nombre_archivo = os.path.basename(base_nombre)
+    base = os.path.join("Practica", nombre_archivo)
+
     ruta_ly = base + ".ly"
     with open(ruta_ly, "w", encoding="utf-8") as f:
         f.write(texto_lilypond(partitura))
@@ -306,21 +341,29 @@ def generar_salida(partitura, base, solo_ly=False, aviso=print):
         (["ffmpeg", "-y", "-i", base + ".wav", "-loglevel", "error", "-i", base + ".wav",
           "-codec:a", "libmp3lame", "-qscale:a", "2", base + ".mp3"], "el MP3", [".mp3"]),
     ]
+    
     for cmd, descripcion, extensiones in pasos:
         if not correr(cmd, descripcion):
             break
         generados += [base + e for e in extensiones]
+
+    # Si LilyPond o las herramientas externas no están instaladas (común en Render),
+    # generamos el archivo WAV automáticamente usando Python puro.
+    if not os.path.exists(base + ".wav") and not os.path.exists(base + ".mp3"):
+        try:
+            generar_wav_python(partitura, base + ".wav")
+            generados.append(base + ".wav")
+        except Exception as e:
+            print(f"Aviso: no se pudo generar WAV alternativo: {e}", file=sys.stderr)
+
     return generados
 
 
 def correr(cmd, descripcion):
     if shutil.which(cmd[0]) is None:
-        print(f"Aviso: no se encontró «{cmd[0]}», no se generó {descripcion}.", file=sys.stderr)
         return False
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
-        detalle = r.stderr.strip()[-400:]
-        print(f"Aviso: falló {cmd[0]} al generar {descripcion}:\n{detalle}", file=sys.stderr)
         return False
     return True
 
