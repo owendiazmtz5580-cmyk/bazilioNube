@@ -7,6 +7,7 @@ import sys
 import threading
 import struct
 import wave
+import hashlib
 from antlr4 import CommonTokenStream, FileStream
 from antlr4.error.ErrorListener import ErrorListener
 
@@ -325,7 +326,12 @@ def generar_wav_python(partitura, ruta_salida, duracion_nota=0.35, sample_rate=4
 
 def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
     os.makedirs("Practica", exist_ok=True)
-    nombre_archivo = os.path.basename(base_nombre)
+    
+    # Crear un identificador único basado en las notas de la partitura para evitar caché
+    partitura_str = "".join(map(str, partitura))
+    hash_partitura = hashlib.md5(partitura_str.encode()).hexdigest()[:6]
+    
+    nombre_archivo = f"{os.path.basename(base_nombre)}_{hash_partitura}"
     base = os.path.join("Practica", nombre_archivo)
 
     ruta_ly = base + ".ly"
@@ -347,8 +353,7 @@ def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
             break
         generados += [base + e for e in extensiones]
 
-    # Si LilyPond o las herramientas externas no están instaladas (común en Render),
-    # generamos el archivo WAV automáticamente usando Python puro.
+    # Si LilyPond o las herramientas externas no están instaladas, generamos el WAV con Python puro
     if not os.path.exists(base + ".wav") and not os.path.exists(base + ".mp3"):
         try:
             generar_wav_python(partitura, base + ".wav")
