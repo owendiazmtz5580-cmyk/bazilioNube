@@ -1,2 +1,4 @@
+flask
+flask-cors
+antlr4-python3-runtime
 streamlit
-antlr4-python3-runtime==4.13.1
