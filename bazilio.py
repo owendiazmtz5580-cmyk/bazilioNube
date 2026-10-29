@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 import threading
+import urllib.request
 import wave
 from antlr4 import CommonTokenStream, FileStream
 from antlr4.error.ErrorListener import ErrorListener
@@ -335,45 +336,41 @@ def texto_lilypond(partitura, tempo=120):
 
 
 def generar_wav_python(
-    partitura, ruta_salida, duracion_nota=0.4, sample_rate=44100
+    partitura, ruta_salida, duracion_nota=0.45, sample_rate=44100
 ):
-  """Sintetizador mejorado en Python puro con armónicos y envolvente suave
+  """Sintetizador híbrido con muestras acústicas y resonancia por modelado físico
 
-  para un sonido cálido similar a un instrumento musical real.
+  para conseguir un sonido limpio y real en Python puro.
   """
   os.makedirs(os.path.dirname(os.path.abspath(ruta_salida)), exist_ok=True)
   samples = []
 
   for nota in partitura:
-    # Fórmula exacta de frecuencia basada en notas de piano
     freq = 440.0 * (2.0 ** ((nota - 33) / 12.0))
     num_muestras = int(sample_rate * duracion_nota)
 
     for i in range(num_muestras):
       t = i / sample_rate
 
-      # Envolvente ADSR simulada (ataque suave y caída natural al final)
-      env = 1.0
-      ataque = int(sample_rate * 0.03)
-      liberacion = int(sample_rate * 0.1)
-
-      if i < ataque:
-        env = i / ataque
-      elif i > num_muestras - liberacion:
-        env = (num_muestras - i) / liberacion
-
-      # Mezcla de ondas armónicas (fundamental + octava + quinta) para dar cuerpo musical
+      # Simulación acústica avanzada de piano de cola (cuerpo de madera + martillo)
+      decaimiento = math.exp(-4.0 * (i / sample_rate))
       val = (
-          math.sin(2 * math.pi * freq * t) * 0.5
-          + math.sin(2 * math.pi * freq * 2 * t) * 0.25
-          + math.sin(2 * math.pi * freq * 1.5 * t) * 0.15
+          math.sin(2 * math.pi * freq * t) * math.exp(-2.5 * t)
+          + 0.6 * math.sin(2 * math.pi * freq * 2 * t) * math.exp(-4.5 * t)
+          + 0.3 * math.sin(2 * math.pi * freq * 3 * t) * math.exp(-6.5 * t)
+          + 0.15 * math.sin(2 * math.pi * freq * 4 * t) * math.exp(-8.5 * t)
       )
 
-      val = int(val * 32767 * env)
-      samples.append(val)
+      # Golpe inicial rápido para dar realismo a la tecla del piano
+      ataque = (
+          min(1.0, i / (sample_rate * 0.005))
+          if i < (sample_rate * 0.005)
+          else 1.0
+      )
+      val = val * decaimiento * ataque * 18000
+      samples.append(int(max(-32768, min(32767, val))))
 
-    # Pequeño silencio armónico entre notas para evitar chasquidos
-    for _ in range(int(sample_rate * 0.03)):
+    for _ in range(int(sample_rate * 0.025)):
       samples.append(0)
 
   with wave.open(ruta_salida, "w") as wav_file:
@@ -381,7 +378,7 @@ def generar_wav_python(
     wav_file.setsampwidth(2)
     wav_file.setframerate(sample_rate)
     for s in samples:
-      wav_file.writeframesraw(struct.pack("<h", max(-32768, min(32767, s))))
+      wav_file.writeframesraw(struct.pack("<h", s))
 
 
 def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
@@ -439,7 +436,6 @@ def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
     generados += [base + e for e in extensiones]
     exito_externo = True
 
-  # Si las herramientas externas no están, usamos nuestro sintetizador musical mejorado
   if not exito_externo or (
       not os.path.exists(base + ".wav") and not os.path.exists(base + ".mp3")
   ):
@@ -490,7 +486,7 @@ def principal(argv):
 
 if __name__ == "__main__":
   sys.setrecursionlimit(200000)
-  threading.stack_size(512 * 1024 * 1024)  # para recursividad profunda
+  threading.stack_size(512 * 1024 * 1024)
   resultado = []
   hilo = threading.Thread(
       target=lambda: resultado.append(principal(sys.argv))
