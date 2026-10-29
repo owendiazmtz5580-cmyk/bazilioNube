@@ -1,3 +1,4 @@
 lilypond
 timidity
+fluid-soundfont-gm
 ffmpeg
