@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import steamlit as st
 
 # Agregar la ruta actual para que importe sin problema tus archivos
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
