@@ -381,6 +381,31 @@ def generar_wav_python(
       wav_file.writeframesraw(struct.pack("<h", s))
 
 
+SOUNDFONT = "/usr/share/sounds/sf2/FluidR3_GM.sf2"
+
+
+def correr(cmd, descripcion):
+  """Ejecuta un comando externo. Avisa por stderr si no existe o si falla."""
+  if shutil.which(cmd[0]) is None:
+    print(f"Aviso: no se encontró {cmd[0]} ({descripcion}).", file=sys.stderr)
+    return False
+  r = subprocess.run(cmd, capture_output=True, text=True)
+  if r.returncode != 0:
+    print(
+        f"Aviso: falló {cmd[0]} ({descripcion}): {r.stderr.strip()[:300]}",
+        file=sys.stderr,
+    )
+    return False
+  return True
+
+
+def _buscar_midi(base):
+  for ext in (".midi", ".mid"):
+    if os.path.exists(base + ext):
+      return base + ext
+  return None
+
+
 def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
   os.makedirs("Practica", exist_ok=True)
 
@@ -397,65 +422,53 @@ def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
   if solo_ly:
     return generados
 
-  pasos = [
-      (
-          ["lilypond", "-o", base, ruta_ly],
-          "el PDF y el MIDI",
-          [".pdf", ".midi"],
-      ),
-      (
-          ["timidity", "-Ow", "-o", base + ".wav", base + ".midi"],
-          "el WAV",
-          [".wav"],
-      ),
-      (
-          [
-              "ffmpeg",
-              "-y",
-              "-i",
-              base + ".wav",
-              "-loglevel",
-              "error",
-              "-i",
-              base + ".wav",
-              "-codec:a",
-              "libmp3lame",
-              "-qscale:a",
-              "2",
-              base + ".mp3",
-          ],
-          "el MP3",
-          [".mp3"],
-      ),
-  ]
+  # 1) LilyPond: partitura en PDF y archivo MIDI
+  if correr(["lilypond", "-o", base, ruta_ly], "el PDF y el MIDI"):
+    if os.path.exists(base + ".pdf"):
+      generados.append(base + ".pdf")
 
-  exito_externo = False
-  for cmd, descripcion, extensiones in pasos:
-    if not correr(cmd, descripcion):
-      break
-    generados += [base + e for e in extensiones]
-    exito_externo = True
+  # 2) FluidSynth: MIDI -> WAV con soundfont de piano real
+  midi = _buscar_midi(base)
+  if midi and os.path.exists(SOUNDFONT):
+    if correr(
+        [
+            "fluidsynth", "-ni", "-q",
+            "-F", base + ".wav",
+            "-r", "44100",
+            SOUNDFONT, midi,
+        ],
+        "el WAV",
+    ):
+      generados.append(base + ".wav")
+  elif midi:
+    print(f"Aviso: no se encontró el soundfont {SOUNDFONT}.", file=sys.stderr)
 
-  if not exito_externo or (
-      not os.path.exists(base + ".wav") and not os.path.exists(base + ".mp3")
-  ):
+  # 3) FFmpeg: WAV -> MP3
+  if os.path.exists(base + ".wav"):
+    if correr(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", base + ".wav",
+            "-codec:a", "libmp3lame", "-qscale:a", "2",
+            base + ".mp3",
+        ],
+        "el MP3",
+    ):
+      generados.append(base + ".mp3")
+
+  # Último recurso: sintetizador en Python puro (suena sintético)
+  if not os.path.exists(base + ".wav"):
+    print(
+        "Aviso: usando el sintetizador de respaldo en Python (sonido básico).",
+        file=sys.stderr,
+    )
     try:
       generar_wav_python(partitura, base + ".wav")
-      if base + ".wav" not in generados:
-        generados.append(base + ".wav")
+      generados.append(base + ".wav")
     except Exception as e:
       print(f"Aviso: no se pudo generar WAV alternativo: {e}", file=sys.stderr)
 
   return generados
-
-
-def correr(cmd, descripcion):
-  if shutil.which(cmd[0]) is None:
-    return False
-  r = subprocess.run(cmd, capture_output=True, text=True)
-  if r.returncode != 0:
-    return False
-  return True
 
 
 def principal(argv):
