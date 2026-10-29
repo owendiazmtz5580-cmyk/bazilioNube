@@ -381,6 +381,43 @@ def generar_wav_python(
       wav_file.writeframesraw(struct.pack("<h", s))
 
 
+def _vlq(n):
+  """Entero -> cantidad de longitud variable de MIDI."""
+  out = [n & 0x7F]
+  n >>= 7
+  while n:
+    out.append((n & 0x7F) | 0x80)
+    n >>= 7
+  return bytes(reversed(out))
+
+
+def valor_a_midi(valor):
+  """Valor 0..51 (teclas blancas) -> número de nota MIDI (C4 = 60)."""
+  if valor < 2:
+    return 21 if valor == 0 else 23  # A0, B0
+  k = valor - 2
+  octava, idx = 1 + k // 7, k % 7
+  return 12 * (octava + 1) + (0, 2, 4, 5, 7, 9, 11)[idx]
+
+
+def generar_midi_python(partitura, ruta_salida, tempo=120):
+  """Escribe un archivo MIDI (piano) sin depender de LilyPond."""
+  ticks = 480  # por negra
+  datos = bytearray()
+  datos += _vlq(0) + b"\xFF\x51\x03" + (60_000_000 // tempo).to_bytes(3, "big")
+  datos += _vlq(0) + b"\xC0\x00"  # programa 0: piano de cola
+  pausa = 0  # tiempo pendiente antes del siguiente evento
+  for valor in partitura:
+    nota = valor_a_midi(valor)
+    datos += _vlq(pausa) + bytes([0x90, nota, 90])
+    datos += _vlq(ticks - 30) + bytes([0x80, nota, 0])
+    pausa = 30
+  datos += _vlq(pausa) + b"\xFF\x2F\x00"
+  with open(ruta_salida, "wb") as f:
+    f.write(b"MThd" + struct.pack(">IHHH", 6, 0, 1, ticks))
+    f.write(b"MTrk" + struct.pack(">I", len(datos)) + bytes(datos))
+
+
 SOUNDFONT = "/usr/share/sounds/sf2/FluidR3_GM.sf2"
 
 
@@ -422,17 +459,20 @@ def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
   if solo_ly:
     return generados
 
-  # 1) LilyPond: partitura en PDF y archivo MIDI
-  if correr(["lilypond", "-o", base, ruta_ly], "el PDF y el MIDI"):
+  # 1) MIDI generado en Python (no depende de LilyPond)
+  midi = base + ".mid"
+  generar_midi_python(partitura, midi)
+
+  # 2) LilyPond solo para el PDF de la partitura (opcional)
+  if correr(["lilypond", "-o", base, ruta_ly], "el PDF"):
     if os.path.exists(base + ".pdf"):
       generados.append(base + ".pdf")
 
-  # 2) FluidSynth: MIDI -> WAV con soundfont de piano real
-  midi = _buscar_midi(base)
-  if midi and os.path.exists(SOUNDFONT):
+  # 3) FluidSynth: MIDI -> WAV con soundfont de piano real
+  if os.path.exists(SOUNDFONT):
     if correr(
         [
-            "fluidsynth", "-ni", "-q",
+            "fluidsynth", "-ni", "-q", "-g", "1.0",
             "-F", base + ".wav",
             "-r", "44100",
             SOUNDFONT, midi,
@@ -440,10 +480,10 @@ def generar_salida(partitura, base_nombre, solo_ly=False, aviso=print):
         "el WAV",
     ):
       generados.append(base + ".wav")
-  elif midi:
+  else:
     print(f"Aviso: no se encontró el soundfont {SOUNDFONT}.", file=sys.stderr)
 
-  # 3) FFmpeg: WAV -> MP3
+  # 4) FFmpeg: WAV -> MP3
   if os.path.exists(base + ".wav"):
     if correr(
         [
